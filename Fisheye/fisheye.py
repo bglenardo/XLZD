@@ -62,6 +62,124 @@ class Fisheye:
     def DefineObject(self, object_points_3d, object_weights_3d):
         self.object_points_3d = object_points_3d
         self.object_weights_3d = object_weights_3d
+
+    def CreatePhotonSourceFromTrack(self, track_points_xyE, photons_per_energy=1.0,
+                                    kernel_sigma_um=100.0, z_min_mm=0.0, z_max_mm=5.0,
+                                    count_mode='deterministic', rng_seed=None,
+                                    normalize_negative_energy='clip'):
+        # Build photon origins from (x, y, E) track points.
+        track_points_xyE = np.asarray(track_points_xyE, dtype=float)
+        if track_points_xyE.ndim != 2 or track_points_xyE.shape[1] != 3:
+            raise ValueError("track_points_xyE must be an Nx3 array with columns (x_cm, y_cm, E).")
+
+        if z_max_mm < z_min_mm:
+            raise ValueError("z_max_mm must be greater than or equal to z_min_mm.")
+
+        if photons_per_energy < 0:
+            raise ValueError("photons_per_energy must be non-negative.")
+
+        if kernel_sigma_um < 0:
+            raise ValueError("kernel_sigma_um must be non-negative.")
+
+        allowed_count_modes = ['deterministic', 'poisson']
+        if count_mode not in allowed_count_modes:
+            raise ValueError(f"Invalid count_mode: {count_mode}. Allowed values are: {allowed_count_modes}")
+
+        allowed_negative_energy_modes = ['clip', 'raise']
+        if normalize_negative_energy not in allowed_negative_energy_modes:
+            raise ValueError(
+                f"Invalid normalize_negative_energy: {normalize_negative_energy}. "
+                f"Allowed values are: {allowed_negative_energy_modes}"
+            )
+
+        valid_mask = np.all(np.isfinite(track_points_xyE), axis=1)
+        valid_rows = track_points_xyE[valid_mask]
+
+        if valid_rows.size == 0:
+            self.DefineObject(np.empty((0, 3), dtype=float), np.empty((0,), dtype=float))
+            return {
+                'photon_points_3d_cm': self.object_points_3d,
+                'photon_weights': self.object_weights_3d,
+                'metadata': {
+                    'n_input_points': int(track_points_xyE.shape[0]),
+                    'n_valid_points': 0,
+                    'n_generated_photons': 0,
+                    'count_mode': count_mode,
+                    'kernel_sigma_um': float(kernel_sigma_um),
+                    'z_range_mm': [float(z_min_mm), float(z_max_mm)],
+                    'rng_seed': rng_seed,
+                }
+            }
+
+        x_cm = valid_rows[:, 0]
+        y_cm = valid_rows[:, 1]
+        energies = valid_rows[:, 2]
+
+        if normalize_negative_energy == 'raise' and np.any(energies < 0):
+            raise ValueError("Negative energies found in track_points_xyE while normalize_negative_energy='raise'.")
+
+        energies = np.clip(energies, 0.0, None)
+        expected_counts = energies * photons_per_energy
+
+        if count_mode == 'deterministic':
+            photon_counts = np.rint(expected_counts).astype(int)
+        else:
+            rng = np.random.default_rng(rng_seed)
+            photon_counts = rng.poisson(expected_counts).astype(int)
+
+        total_photons = int(np.sum(photon_counts))
+        if total_photons == 0:
+            self.DefineObject(np.empty((0, 3), dtype=float), np.empty((0,), dtype=float))
+            return {
+                'photon_points_3d_cm': self.object_points_3d,
+                'photon_weights': self.object_weights_3d,
+                'metadata': {
+                    'n_input_points': int(track_points_xyE.shape[0]),
+                    'n_valid_points': int(valid_rows.shape[0]),
+                    'n_generated_photons': 0,
+                    'count_mode': count_mode,
+                    'kernel_sigma_um': float(kernel_sigma_um),
+                    'z_range_mm': [float(z_min_mm), float(z_max_mm)],
+                    'rng_seed': rng_seed,
+                }
+            }
+
+        sigma_cm = kernel_sigma_um * 1e-4
+        z_min_cm = z_min_mm * 0.1
+        z_max_cm = z_max_mm * 0.1
+
+        # Expand source points according to sampled photon count per track point.
+        x_rep = np.repeat(x_cm, photon_counts)
+        y_rep = np.repeat(y_cm, photon_counts)
+
+        rng_xy = np.random.default_rng(rng_seed)
+        if sigma_cm > 0:
+            photon_x_cm = x_rep + rng_xy.normal(loc=0.0, scale=sigma_cm, size=total_photons)
+            photon_y_cm = y_rep + rng_xy.normal(loc=0.0, scale=sigma_cm, size=total_photons)
+        else:
+            photon_x_cm = x_rep
+            photon_y_cm = y_rep
+
+        photon_z_cm = rng_xy.uniform(z_min_cm, z_max_cm, size=total_photons) + self.distance_to_object_cm
+
+        photon_points_3d_cm = np.column_stack((photon_x_cm, photon_y_cm, photon_z_cm))
+        photon_weights = np.ones(total_photons, dtype=float)
+
+        self.DefineObject(photon_points_3d_cm, photon_weights)
+
+        return {
+            'photon_points_3d_cm': photon_points_3d_cm,
+            'photon_weights': photon_weights,
+            'metadata': {
+                'n_input_points': int(track_points_xyE.shape[0]),
+                'n_valid_points': int(valid_rows.shape[0]),
+                'n_generated_photons': total_photons,
+                'count_mode': count_mode,
+                'kernel_sigma_um': float(kernel_sigma_um),
+                'z_range_mm': [float(z_min_mm), float(z_max_mm)],
+                'rng_seed': rng_seed,
+            }
+        }
         
     def ProjectPoints(self):
         if self.object_points_3d is None:
