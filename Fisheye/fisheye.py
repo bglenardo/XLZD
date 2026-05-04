@@ -24,7 +24,7 @@ class Fisheye:
         
         self.projection_type = projection_type
         
-        self.allowed_projection_types = ['equidistant', 'stereographic', 'orthographic', 'equisolid_angle']
+        self.allowed_projection_types = ['equidistant', 'stereographic', 'orthographic', 'equisolid_angle', 'adam_01']
         if self.projection_type not in self.allowed_projection_types:
             raise ValueError(f"Invalid projection type: {self.projection_type}. Allowed types are: {self.allowed_projection_types}")
         
@@ -57,7 +57,8 @@ class Fisheye:
             self.focal_length_mm = self.sensor.max_image_radius_mm / np.sin(self.field_of_view_theta)
         elif self.projection_type == 'equisolid_angle':
             self.focal_length_mm = self.sensor.max_image_radius_mm / (2 * np.sin(self.field_of_view_theta / 2))
-        
+        elif self.projection_type == 'adam_01':
+            self.focal_length_mm = None
         
     def DefineObject(self, object_points_3d, object_weights_3d):
         self.object_points_3d = object_points_3d
@@ -181,7 +182,13 @@ class Fisheye:
             }
         }
         
-    def ProjectPoints(self):
+    def _quadratic_distortion(self, theta, a=-9.09798e-05, b=3.98230e-04, c=-1.58827e-03):
+        return a * theta**2 + b * theta + c
+
+    def _aberration_rms(self, theta, a=43.82030, b=0.7867602, c=-0.2068018, d=8.443034e-03, e=-7.940373e-05):
+        return (a + b * theta + c * theta**2 + d * theta**3 + e * theta**4)/1000.0 # convert from um to mm
+
+    def ProjectPoints(self, aberration=False):
         if self.object_points_3d is None:
             raise ValueError("Object points have not been defined. Please call DefineObject() first.")
         object_points_3d = self.object_points_3d
@@ -202,6 +209,10 @@ class Fisheye:
             radii_mm = self.focal_length_mm * np.sin(thetas)
         elif self.projection_type == 'equisolid_angle':
             radii_mm = 2 * self.focal_length_mm * np.sin(thetas / 2)
+        elif self.projection_type == 'adam_01':
+            # thetas *= 180 / np.pi # convert to degrees for the distortion function
+            radii_mm = 10.19619 * np.tan(thetas) * (1 + self._quadratic_distortion(thetas*180 / np.pi))
+            
             
         # Finally, I need to convert the radii to coordinates on the sensor plane.
         # The angle phi is the angle in the x-y plane, which can be computed as:
@@ -209,6 +220,11 @@ class Fisheye:
         # The coordinates on the sensor plane are then:
         x_coords = radii_mm * np.cos(phis)
         y_coords = radii_mm * np.sin(phis)
+        if self.projection_type == 'adam_01' and aberration:
+            aberration_rms_mm = self._aberration_rms(thetas)
+            x_coords += np.random.normal(loc=0.0, scale=aberration_rms_mm)
+            y_coords += np.random.normal(loc=0.0, scale=aberration_rms_mm)
+            
         # Make image_points_2d_cm a Nx2 array
         self.image_points_2d_mm = np.column_stack((x_coords, y_coords))
         
