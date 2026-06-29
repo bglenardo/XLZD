@@ -1,0 +1,8 @@
+del, delta_CP
+dm21, delta_m21^2
+dm31, delta_m31^2
+sq12, sin(theta_12)^2
+sq13, sin(theta_13)^2
+sq23, sin(theta_23)^2
+delta_a1, majorana_phase_1
+delta_a2, majorana_phase_2
