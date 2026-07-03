@@ -430,6 +430,26 @@ def phase_curve(params_dict, ordering, m_l_phase_eV, delta_a1, delta_a2):
     )
 
 
+def cp_conserving_curves(params_dict, ordering, m_l_phase_eV) -> Dict[str, np.ndarray]:
+    """m_bb(m_l) for the four CP-conserving Majorana-phase combinations (alpha1, alpha2 in {0, pi}).
+
+    theta23 and delta_CP drop out of the m_bb formula entirely, so this is also the
+    complete set of predictions from mu-tau reflection symmetry: it fixes theta23 = pi/4
+    and delta_CP = +-pi/2, and forces the Majorana phases to be CP-conserving, but does
+    not pick out a unique combination among these four.
+    """
+    combos = {
+        "(0, 0)": (0.0, 0.0),
+        "(0, pi)": (0.0, np.pi),
+        "(pi, 0)": (np.pi, 0.0),
+        "(pi, pi)": (np.pi, np.pi),
+    }
+    return {
+        label: phase_curve(params_dict, ordering, m_l_phase_eV, a1, a2)
+        for label, (a1, a2) in combos.items()
+    }
+
+
 def exclusion_weights(samples_eV, band):
     return np.clip((samples_eV - band["upper"]) / (band["lower"] - band["upper"]), 0.0, 1.0)
 
