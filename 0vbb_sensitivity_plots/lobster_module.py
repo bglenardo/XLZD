@@ -407,6 +407,41 @@ def sensitivity_weights(y_centers, band):
     return np.clip((y_centers - band["upper"]) / (band["lower"] - band["upper"]), 0.0, 1.0)
 
 
+def mbb_band_single_halflife(nme_band, t_half, G, g_A=1.273, m_e=0.511e6):
+    """m_bb band (eV) implied by a single half-life threshold, spanned by an NME range.
+
+    Unlike mbb_band_from_halflife, this takes one scalar t_half (e.g. a single discovery
+    half-life with no separate exposure-driven upper/lower pair) and isotope-specific G,
+    so it works for any experiment/isotope without touching the caller's own G/NME globals.
+    """
+    return {
+        "upper": np.sqrt(1.0 / (G * g_A**4 * nme_band["lower"] ** 2 * t_half)) * m_e,
+        "lower": np.sqrt(1.0 / (G * g_A**4 * nme_band["upper"] ** 2 * t_half)) * m_e,
+    }
+
+
+def conditional_discovery_probability(h_pdf, y_edges, band_condition, band_target):
+    """P(target experiment discovers | condition experiment discovers) vs. the pdf's x-axis.
+
+    Both bands act on the same underlying m_bb density (h_pdf, row-normalized over y), so the
+    two experiments' discovery weights are combined pointwise in m_bb before marginalizing --
+    this preserves the correlation between them instead of treating the two as independent.
+    """
+    y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+    w_condition = sensitivity_weights(y_centers, band_condition)
+    w_target = sensitivity_weights(y_centers, band_target)
+
+    p_condition = h_pdf @ w_condition
+    p_joint = h_pdf @ (w_condition * w_target)
+
+    return np.divide(
+        p_joint,
+        p_condition,
+        out=np.full_like(p_joint, np.nan),
+        where=p_condition > 0,
+    )
+
+
 def discovery_probabilities(h_no_pdf, h_io_pdf, y_edges, band_80t, band_60t):
     y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
     w_80t = sensitivity_weights(y_centers, band_80t)
