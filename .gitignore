@@ -15,3 +15,4 @@ __pycache__/
 # PMT saturation project: scratch dirs of regenerated per-run LTspice files
 PMT saturation/fit_scratch/
 PMT saturation/PandaX Saturation Curve Fitting/
+PMT saturation/R11410/diagnostic_gifs/
