@@ -87,7 +87,7 @@ def read_anode_charge(raw_path):
     t = raw.get_trace("time").get_wave()
     i_r1 = raw.get_trace("I(R1)").get_wave()
     mask = (t >= T0) & (t <= T1)
-    return float(np.trapz(i_r1[mask], t[mask]))
+    return float(np.trapezoid(i_r1[mask], t[mask]))
 
 
 def gain_from_charge(Q, n_pe):
@@ -116,14 +116,17 @@ def add_save_nodes(text, extra_nodes):
     return new_text
 
 
-def _execute(*, v1, n_pe, inc_params=None, extra_save_nodes=None, scratch_dir=SCRATCH_DIR, run_name="run"):
-    """Patch scratch copies of the base .asc/.inc with the given V1, N_pe, and any
-    pmt_model_v4.inc parameter overrides, run through LTspice batch mode, and return
-    the resulting .raw path for the caller to read whichever traces it needs."""
+def _execute(*, v1, n_pe, inc_params=None, extra_save_nodes=None, scratch_dir=SCRATCH_DIR,
+             run_name="run", asc_path=BASE_ASC, inc_path=BASE_INC):
+    """Patch scratch copies of the base .asc/.inc (defaulting to the R12699
+    pmt_saturation_fit_v4.asc/pmt_model_v4.inc, override with asc_path/inc_path for another
+    PMT's files) with the given V1, N_pe, and any .inc parameter overrides, run through
+    LTspice batch mode, and return the resulting .raw path for the caller to read whichever
+    traces it needs."""
     scratch_dir = Path(scratch_dir)
     scratch_dir.mkdir(parents=True, exist_ok=True)
 
-    asc_text = BASE_ASC.read_text()
+    asc_text = asc_path.read_text()
     asc_text = set_voltage_source(asc_text, "V1", v1)
     asc_text = set_param(asc_text, "N_pe", n_pe)
     if extra_save_nodes:
@@ -131,10 +134,10 @@ def _execute(*, v1, n_pe, inc_params=None, extra_save_nodes=None, scratch_dir=SC
     asc_name = f"{run_name}.asc"
     (scratch_dir / asc_name).write_text(asc_text)
 
-    inc_text = BASE_INC.read_text()
+    inc_text = inc_path.read_text()
     for name, value in (inc_params or {}).items():
         inc_text = set_param(inc_text, name, value)
-    (scratch_dir / BASE_INC.name).write_text(inc_text)
+    (scratch_dir / inc_path.name).write_text(inc_text)
 
     for ext in (".log", ".raw", ".op.raw", ".net"):
         stale = scratch_dir / f"{run_name}{ext}"
@@ -162,27 +165,33 @@ def _execute(*, v1, n_pe, inc_params=None, extra_save_nodes=None, scratch_dir=SC
     return raw_path
 
 
-def run_sim(*, v1, n_pe, inc_params=None, scratch_dir=SCRATCH_DIR, run_name="run"):
+def run_sim(*, v1, n_pe, inc_params=None, scratch_dir=SCRATCH_DIR, run_name="run",
+            asc_path=BASE_ASC, inc_path=BASE_INC):
     """Same as _execute, but returns the integrated anode charge (Coulombs, signed)
     directly -- the common case for fit-loop evaluations."""
-    raw_path = _execute(v1=v1, n_pe=n_pe, inc_params=inc_params, scratch_dir=scratch_dir, run_name=run_name)
+    raw_path = _execute(v1=v1, n_pe=n_pe, inc_params=inc_params, scratch_dir=scratch_dir,
+                         run_name=run_name, asc_path=asc_path, inc_path=inc_path)
     return read_anode_charge(raw_path)
 
 
-def simulate_gain(v1, n_pe, inc_params=None, scratch_dir=SCRATCH_DIR, run_name="run"):
-    Q = run_sim(v1=v1, n_pe=n_pe, inc_params=inc_params, scratch_dir=scratch_dir, run_name=run_name)
+def simulate_gain(v1, n_pe, inc_params=None, scratch_dir=SCRATCH_DIR, run_name="run",
+                   asc_path=BASE_ASC, inc_path=BASE_INC):
+    Q = run_sim(v1=v1, n_pe=n_pe, inc_params=inc_params, scratch_dir=scratch_dir,
+                run_name=run_name, asc_path=asc_path, inc_path=inc_path)
     return gain_from_charge(Q, n_pe)
 
 
 # --- Stage 1: fit k, a against gain-vs-HV data (run at low N_pe to stay in the linear regime) ---
 
-def stage1_loss(params, target_voltage, target_gain, n_pe=10, scratch_dir=SCRATCH_DIR):
+def stage1_loss(params, target_voltage, target_gain, n_pe=10, scratch_dir=SCRATCH_DIR,
+                 asc_path=BASE_ASC, inc_path=BASE_INC):
     k, a = params
     sim_gains = []
     for v1 in target_voltage:
         try:
             sim_gains.append(
-                simulate_gain(v1, n_pe, inc_params={"k": k, "a": a}, scratch_dir=scratch_dir))
+                simulate_gain(v1, n_pe, inc_params={"k": k, "a": a}, scratch_dir=scratch_dir,
+                               asc_path=asc_path, inc_path=inc_path))
         except (SimTimeoutError, RuntimeError) as exc:
             print(f"stage1_loss: sim failed for v1={v1}, k={k}, a={a}: {exc}")
             return LOSS_PENALTY

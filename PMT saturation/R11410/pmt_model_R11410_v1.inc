@@ -6,8 +6,8 @@
 .func vclamp(V) { max(V, Vmin) }
 
 ; Stage gain parameters
-.param a   = 0.7899522374
-.param k   = 0.1228249797
+.param a   = 0.8113804291
+.param k   = 0.09069767165
 .param V_0 = 0
 
 .func k_gen( V ) { k/sqrt(1+V_0/vclamp(V)) }
